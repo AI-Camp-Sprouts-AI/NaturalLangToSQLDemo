@@ -22,6 +22,15 @@ OutputTypes = Enum('OutputTypes', [
     # 'API' # This is for a later use case
 ])
 
+from enum import Enum
+from langchain.schema.language_model import BaseLanguageModel
+from langchain.schema import HumanMessage, SystemMessage, AIMessage
+
+# Enumerators
+OutputTypes = Enum('OutputTypes', [
+    'SQL',
+    # 'API' # This is for a later use case
+])
 
 class NLP2SQL(IBaseClass):
     """
@@ -38,23 +47,65 @@ class NLP2SQL(IBaseClass):
         self.options = options
 
         self.schema = ''
-        self.system_prompt = """
-            You are an experienced data analyst with specialized knowledge in PostGreSQL databases and queries. 
-            You can provide accurate PostGreSQL queries based on the provided database schema and make use of your expert knowledge of PostGreSQL and databases.
-            The purpose is to assist with formulating PostGreSQL queries based on the information available, maintaining the accuracy and relevance of the responses.
-            For valid and clear questions related to the provided database, provide ONLY the appropriate PostGreSQL query as a response and nothing else.
-            If a question is asked that is incomplete, ambiguous, unclear, or unrelated to the provided database, ask for clarification.
-            If a question is missing any necessary information, ask for clarification instead of responding with an PostGreSQL query.
+
+        self.relevancy_prompt = """
+            As an experienced data analyst with expertise in PostgreSQL, your role is to assess the relevance of a human prompt in relation to a given database schema, focusing on flexibility and practical interpretations. 
+            Determine if the schema can plausibly support answering the question in the prompt.
+
+            Respond with 'yes' or 'no':
+            - 'Yes' if it is reasonably possible to answer the prompt using the given schema, erring on the side of a broader interpretation of column names and data types.
+            - 'No' only if the prompt clearly cannot be answered with the available schema information.
+            Remember to include yes or no in your responses.
+
+            Use common database naming conventions and industry practices as a guide, but lean towards inclusive interpretations. Avoid overly stringent verification or requests for clarification unless absolutely necessary.
+
             Database Schema:
             {schema}
-            Remember to only respond with the appropriate SQL query or the question for clarification, nothing else.
+        """.replace('  ', '').strip()
+
+        self.generation_prompt = """
+            As a proficient SQL developer, your task is to create a PostgreSQL query based on a human prompt, with reference to the provided database schema. 
+            Your expertise in SQL syntax and database querying techniques is essential for developing a valid SQL query.
+
+            The response must strictly consist of the PostgreSQL query. Exclude all additional commentary or explanation. 
+            The query should be concise, well-structured, and adhere to standard PostgreSQL practices, ensuring optimized execution.
+
+            Focus exclusively on the database schema's structure, fields, relationships, and other relevant details when formulating your query. 
+
+            Database Schema:
+            {schema}
+
+            Formulate an appropriate PostgreSQL query in direct response to the human prompt. Your response should contain solely the SQL query, with no text other than the query itself.
         """.replace('  ', '').strip()
 
         self.review_prompt = """
-            You are to review the content provided. Your objective is clear:
-            If the content contains an SQL query, extract and present only that SQL query.
-            If the content does not contain any SQL query, respond with 'INVALID QUERY'.
-            Do not provide additional information or context. Stick strictly to the above guidelines.
+            As an expert in SQL and database management, your task is to review a provided PostgreSQL query and determine its impact on the database. 
+            Specifically, assess whether the query modifies the database in any way (such as through INSERT, UPDATE, DELETE, or ALTER statements).
+
+            Your response should be a simple 'yes' or 'no'. 
+            Answer 'yes' if the query does not modify the database. 
+            Answer 'no' if the query does modify the database.
+
+            Database Schema:
+            {schema}
+
+            Review the query and respond with 'yes' if it is safe in terms of not modifying the database and not including external elements, or 'no' if it fails to meet these criteria.
+        """.replace('  ', '').strip()
+
+        self.clarification_prompt = """
+            Given that the human prompts provided for SQL query generation are known to be invalid (either due to ambiguity, incompleteness, or potential malicious intent), your role is to systematically request additional information or clarification. 
+            Your response should aim to guide the prompt provider towards supplying the necessary details for formulating a valid and secure SQL query.
+
+            For each prompt, identify key areas where information is lacking, ambiguous, or potentially harmful, and formulate a precise request for the needed information. 
+            Your goal is to engage constructively with the prompt provider, guiding them to refine their request into a clear, complete, and secure format suitable for SQL query generation.
+
+            Upon receiving an invalid prompt, respond with specific questions or requests that address the shortcomings of the prompt, ensuring that your response facilitates the creation of a valid SQL query while maintaining database security and integrity.
+
+            Database Schema:
+            {schema}
+
+            Assess the prompt and respond with targeted requests for clarification or additional details, guiding the prompt provider towards a valid and secure SQL query formulation.
+            LIMIT YOUR RESPONSES TO UNDER THREE SENTENCES IN LENGTH.
         """.replace('  ', '').strip()
 
         self.chat_history = []
@@ -68,27 +119,39 @@ class NLP2SQL(IBaseClass):
         if user_input[-1] not in '.;:?!':
             user_input += '.'
 
-        system_prompt = self.system_prompt.format(schema=self.schema)
-        messages = [SystemMessage(content=system_prompt),
-                    HumanMessage(content=user_input)]
-        response = self.llm.predict_messages(
-            messages=(self.chat_history + messages))
-
         final_output = False
 
-        if 'review' in self.options and self.options['review']:
-            new_response = self.llm.predict_messages(messages=[SystemMessage(content=self.review_prompt), HumanMessage(content="Content:\n"+response.content)])
-            if 'INVALID' not in new_response.content:
+        relevancy_prompt = self.relevancy_prompt.format(schema=self.schema)
+        messages = [SystemMessage(content=relevancy_prompt), HumanMessage(content=user_input)]
+        response = self.llm.predict_messages(messages=(self.chat_history + messages)).content
+        #print("Relevancy:\n"+response)
+
+        if 'yes' in response.lower():
+            generation_prompt = self.generation_prompt.format(schema=self.schema)
+            messages = [SystemMessage(content=generation_prompt), HumanMessage(content=user_input)]
+            response = self.llm.predict_messages(messages=(self.chat_history + messages)).content
+            #print("SQL:\n"+response)
+
+            review_prompt = self.review_prompt.format(schema=self.schema)
+            messages = [SystemMessage(content=review_prompt), HumanMessage(content=response)]
+            review_response = self.llm.predict_messages(messages=messages).content
+            #print("Review:\n"+review_response)
+            if 'yes' in review_response.lower():
                 final_output = True
-                response = new_response
+            else:
+                response = "I'm sorry, I don't understand your question."
+        else:
+            clarification_prompt = self.clarification_prompt.format(schema=self.schema)
+            messages = [SystemMessage(content=clarification_prompt), HumanMessage(content=user_input)]
+            response = self.llm.predict_messages(messages=(self.chat_history + messages)).content
 
         self.chat_history.append(HumanMessage(content=user_input))
-        self.chat_history.append(AIMessage(content=response.content))
+        self.chat_history.append(AIMessage(content=response))
         if len(self.chat_history) > self.memory_length:
             excess = len(self.chat_history) - self.memory_length
             self.chat_history = self.chat_history[excess:]
-        
-        return ModelOutput(response.content, final_output)
+
+        return ModelOutput(response.strip(), final_output)
 
     def override_system_prompt(self, new_system_prompt: str) -> None:
         if '{schema}' in new_system_prompt:
