@@ -1,11 +1,8 @@
-from llm import NLP2SQL, initialize_model
-from dotenv import load_dotenv
-from os import getenv
+from llm import initialize_model
 from langchain.chat_models import ChatOpenAI
 import streamlit as st
 
-load_dotenv()
-api_key = getenv('OPENAI_API_KEY')
+api_key = st.secrets['OPENAI_API_KEY']
 llm = ChatOpenAI(model="gpt-4", openai_api_key=api_key, temperature=0)
 
 with open('dashboard.md', 'r') as file:
@@ -13,9 +10,12 @@ with open('dashboard.md', 'r') as file:
 
 with open('main_docs.md', 'r') as file:
     main_docs = file.read()
+
 with open('connector_docs.md', 'r') as file:
     connector_docs = file.read()
+
 documentation_md = main_docs + '\n\n' + connector_docs
+
 
 def display_chatbot(schema_box, info_box):
     for message in st.session_state.messages:
@@ -32,18 +32,24 @@ def display_chatbot(schema_box, info_box):
             else:
                 with st.chat_message("user"):
                     st.markdown(prompt)
-                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    st.session_state.messages.append(
+                        {"role": "user", "content": prompt})
                 with st.chat_message("ai"):
-                    st.session_state['model'].load_schema_as_string(f"{schema_box}\n{info_box}")
-                    response = st.session_state['model'].predict(prompt).message.replace('\n', '  \n')
+                    st.session_state['model'].load_schema_as_string(
+                        f"{schema_box}\n{info_box}")
+                    response = st.session_state['model'].predict(
+                        prompt).message.replace('\n', '  \n')
                     st.markdown(response)
-                    st.session_state.messages.append({"role": "ai", "content": response})
+                    st.session_state.messages.append(
+                        {"role": "ai", "content": response})
                     st.session_state.processing = False
 
+
 def main():
-    
+
     if 'model' not in st.session_state:
-        st.session_state['model'] = initialize_model(llm=llm, options={'memory': 3})
+        st.session_state['model'] = initialize_model(
+            llm=llm, options={'memory': 3})
 
     if 'current_page' not in st.session_state:
         st.session_state['current_page'] = 'Dashboard'
@@ -59,8 +65,10 @@ def main():
 
         # Chatbot schema and other info text areas in the sidebar
         if st.session_state['current_page'] == 'Chatbot':
-            schema_box = st.text_area("Database Schema", height=300, value=default_schema)
-            info_box = st.text_area("Other Info", height=150, value=default_info)
+            schema_box = st.text_area(
+                "Database Schema", height=300, value=default_schema)
+            info_box = st.text_area(
+                "Other Info", height=150, value=default_info)
 
     # Main content area
     if st.session_state['current_page'] == 'Dashboard':
@@ -77,6 +85,7 @@ def main():
         st.session_state.processing = False
     if "messages" not in st.session_state:
         st.session_state.messages = []
+
 
 # Default values for text areas
 default_schema = """TABLE DomainRecords (
