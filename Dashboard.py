@@ -35,7 +35,7 @@ The main components of our project include:
 
 st.header('Demo')
 
-st.video('./assets/demo.webm', format="video/webm", start_time=10)
+st.video('./assets/demo.mp4', format="video/mp4", start_time=10)
 
 st.header('Workflows')
 
